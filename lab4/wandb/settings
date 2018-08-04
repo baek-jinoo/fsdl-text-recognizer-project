@@ -1,0 +1,4 @@
+[default]
+entity: jin
+project: fsdl-text-recognizer-project
+base_url: https://api.wandb.ai
