@@ -2,9 +2,13 @@ from boltons.cacheutils import cachedproperty
 import tensorflow as tf
 import tensorflow.keras.backend as K
 from tensorflow.python.client import device_lib
-from tensorflow.keras.layers import Conv2D, Dense, Dropout, Flatten, Input, MaxPooling2D, Permute, RepeatVector, Reshape, TimeDistributed, Lambda, LSTM, GRU, CuDNNLSTM, Bidirectional
+from tensorflow.keras.layers import Conv2D, Dense, Dropout, Flatten, Input, MaxPooling2D, Permute, RepeatVector, Reshape, TimeDistributed, Lambda, LSTM, GRU, CuDNNLSTM, Bidirectional, Add
 from tensorflow.keras.models import Sequential
 from tensorflow.keras.models import Model as KerasModel
+    
+#from tensorflow.keras.layers.recurrent import LSTM
+from tensorflow.keras.layers import Bidirectional
+from tensorflow.keras.layers import BatchNormalization
 
 from text_recognizer.models.line_model import LineModel
 from text_recognizer.networks.lenet import lenet
@@ -12,7 +16,7 @@ from text_recognizer.networks.misc import slide_window
 from text_recognizer.networks.ctc import ctc_decode
 
 
-def line_lstm_ctc(input_shape, output_shape, window_width=28, window_stride=14):
+def line_lstm_ctc(input_shape, output_shape, window_width=28, window_stride=14, conv_dim=128, lstm_dim=256, num_lstm_layers=3, dropout=0.3):
     image_height, image_width = input_shape
     output_length, num_classes = output_shape
 
@@ -44,16 +48,43 @@ def line_lstm_ctc(input_shape, output_shape, window_width=28, window_stride=14):
     )(image_reshaped)
     # (num_windows, image_height, window_width, 1)
 
-    # Make a LeNet and get rid of the last two layers (softmax and dropout)
-    convnet = lenet((image_height, window_width, 1), (num_classes,))
-    convnet = KerasModel(inputs=convnet.inputs, outputs=convnet.layers[-2].output)
-    convnet_outputs = TimeDistributed(convnet)(image_patches)
-    # (num_windows, 128)
+    conv = Conv2D(conv_dim, (image_height, window_width), (1, window_stride), activation='relu')(image_reshaped)
+    conv = BatchNormalization()(conv)
+    conv = Dropout(dropout)(conv)
 
-    lstm_output = lstm_fn(128, return_sequences=True)(convnet_outputs)
-    # (num_windows, 128)
+    conv_squeezed = Lambda(lambda x: K.squeeze(x, 1))(conv)
 
-    softmax_output = Dense(num_classes, activation='softmax', name='softmax_output')(lstm_output)
+#model.add(Bidirectional(LSTM(128, activation=None), input_shape=(256,10)))
+#model.add(BatchNormalization())
+    lstm_output1 = Bidirectional(lstm_fn(lstm_dim, return_sequences=True), input_shape=(num_windows, conv_dim))(conv_squeezed)
+    print("dropout", dropout)
+    #lstm_output1 = lstm_fn(lstm_dim, return_sequences=True)(conv_squeezed)
+    # (num_windows, 128)
+    lstm_output2 = lstm_fn(lstm_dim, return_sequences=True)(lstm_output1)
+    lstm_output2 = BatchNormalization()(lstm_output2)
+    lstm_output2 = Dropout(dropout)(lstm_output2)
+    lstm_input3 = lstm_output2
+    
+    lstm_output3 = lstm_fn(lstm_dim, return_sequences=True)(lstm_input3)
+    lstm_output3 = BatchNormalization()(lstm_output3)
+    lstm_output3 = Dropout(dropout)(lstm_output3)
+    
+    lstm_input4 = Add()([lstm_output3, lstm_input3])
+    lstm_output4 = lstm_fn(lstm_dim, return_sequences=True)(lstm_input4)
+    lstm_output4 = BatchNormalization()(lstm_output4)
+    lstm_output4 = Dropout(dropout)(lstm_output4)
+    
+    #lstm_input5 = Add()([lstm_output4, lstm_input4])
+    #lstm_output5 = lstm_fn(lstm_dim, return_sequences=True)(lstm_input5)
+    #lstm_output5 = BatchNormalization()(lstm_output5)
+    #lstm_output5 = Dropout(dropout)(lstm_output5)
+
+    #lstm_input6 = Add()([lstm_output5, lstm_input5])
+    #lstm_output6 = lstm_fn(lstm_dim, return_sequences=True)(lstm_input6)
+    #lstm_output6 = BatchNormalization()(lstm_output6)
+    #lstm_output6 = Dropout(dropout)(lstm_output6)
+    
+    softmax_output = Dense(num_classes, activation='softmax', name='softmax_output')(lstm_output4)
     # (num_windows, num_classes)
     ##### Your code above (Lab 3)
 
